@@ -1,0 +1,6 @@
+{
+  "name": "TaskPulse",
+  "description": "All-in-one productivity hub featuring User Milestones & digital badge achievement system, Daily Habit Tracker & Streak Heatmap, Focus Mode & Pomodoro Timer, Financial CSV / PDF Statement Export, Smart Goal Recommendations, Budget Trend Charts, and Diagram Planning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

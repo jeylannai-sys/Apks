@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">TaskPulse</string>
+    <string name="app_widget_name">TaskPulse Glance</string>
+    <string name="app_widget_desc">See pending tasks, next deadline, and today budget.</string>
+    <string name="tasks_widget_name">TaskPulse Tasks</string>
+    <string name="tasks_widget_desc">Track pending tasks and upcoming deadlines at a glance.</string>
+    <string name="finance_widget_name">TaskPulse Finance</string>
+    <string name="finance_widget_desc">Monitor daily income, expenses, and net balance.</string>
+    <string name="widget_status_active">Active</string>
+    <string name="widget_status_today">Today</string>
+    <string name="widget_status_todo">To-Do</string>
+    <string name="widget_label_income">INCOME</string>
+    <string name="widget_label_expenses">EXPENSES</string>
+    <string name="widget_label_pending_tasks">Pending Tasks</string>
+    <string name="widget_label_pending_tasks_caps">PENDING TASKS</string>
+    <string name="widget_label_spent_today">Spent Today</string>
+    <string name="widget_default_positive_currency">+₱0.00</string>
+    <string name="widget_default_negative_currency">-₱0.00</string>
+    <string name="widget_default_net_balance">Net Balance: ₱0.00</string>
+    <string name="widget_default_zero">0</string>
+    <string name="widget_default_dollar_zero">$0.00</string>
+    <string name="widget_default_all_done">All Done</string>
+    <string name="widget_no_deadlines">No upcoming deadlines today</string>
+</resources>
