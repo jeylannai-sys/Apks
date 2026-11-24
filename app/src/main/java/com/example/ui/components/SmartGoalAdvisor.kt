@@ -77,7 +77,8 @@ enum class SmartGoalActionType {
 fun generateSmartGoalSuggestions(
     transactions: List<ExpenseEntity>,
     budgets: List<BudgetEntity>,
-    currency: AppCurrency
+    currency: AppCurrency,
+    hideAmounts: Boolean = false
 ): List<SmartGoalSuggestion> {
     val suggestions = mutableListOf<SmartGoalSuggestion>()
 
@@ -95,7 +96,7 @@ fun generateSmartGoalSuggestions(
             title = "Cap Dining & Food Spend",
             category = "Financial Discipline",
             description = "Trim monthly dining out by 15% to build discretionary savings without sacrificing nutrition.",
-            targetBenefit = "Save approx ${currency.format(if (foodExpenses > 0) foodExpenses * 0.15 else 50.0)}/month",
+            targetBenefit = "Save approx ${currency.mask(currency.format(if (foodExpenses > 0) foodExpenses * 0.15 else 50.0), hideAmounts)}/month",
             icon = Icons.Default.Savings,
             accentColor = Color(0xFF10B981),
             actionType = SmartGoalActionType.SET_FOOD_BUDGET,
@@ -111,7 +112,7 @@ fun generateSmartGoalSuggestions(
             title = "50/30/20 Wealth Builder",
             category = "Budgeting Framework",
             description = "Allocate 20% of net monthly income directly toward emergency cushion and index reserves.",
-            targetBenefit = "Target Monthly Reserve: ${currency.format(targetSavings)}",
+            targetBenefit = "Target Monthly Reserve: ${currency.mask(currency.format(targetSavings), hideAmounts)}",
             icon = Icons.AutoMirrored.Filled.TrendingUp,
             accentColor = Color(0xFF3B82F6),
             actionType = SmartGoalActionType.SET_SAVINGS_TARGET,
@@ -127,7 +128,7 @@ fun generateSmartGoalSuggestions(
             title = "Smart Shopping Ceiling",
             category = "Impulse Control",
             description = "Enforce a 48-hour cooling rule on non-essential online retail to curb impulse buying.",
-            targetBenefit = "Prevents ${currency.format(shoppingCap * 0.25)} in impulsive cart checkouts",
+            targetBenefit = "Prevents ${currency.mask(currency.format(shoppingCap * 0.25), hideAmounts)} in impulsive cart checkouts",
             icon = Icons.Default.Shield,
             accentColor = Color(0xFF8B5CF6),
             actionType = SmartGoalActionType.SET_SHOPPING_BUDGET,
@@ -175,10 +176,11 @@ fun SmartGoalSuggestionsCard(
     budgets: List<BudgetEntity>,
     currency: AppCurrency,
     onAdoptGoal: (SmartGoalSuggestion) -> Unit,
+    hideAmounts: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val suggestions = remember(transactions, budgets, currency) {
-        generateSmartGoalSuggestions(transactions, budgets, currency)
+    val suggestions = remember(transactions, budgets, currency, hideAmounts) {
+        generateSmartGoalSuggestions(transactions, budgets, currency, hideAmounts)
     }
 
     var adoptedGoals by remember { mutableStateOf(setOf<String>()) }

@@ -22,10 +22,11 @@ enum class DiagramStyle(val displayName: String, val description: String) {
  */
 enum class NodeType(val label: String) {
     START_END("Start / End"),
-    PROCESS("Action / Process"),
-    DECISION("Decision / Condition"),
-    MILESTONE("Milestone / Goal"),
-    NOTE("Sticky Note / Idea")
+    PROCESS("Process / Box"),
+    DECISION("Decision"),
+    CIRCLE("Circle / Hub"),
+    MILESTONE("Goal / Hex"),
+    NOTE("Sticky Note")
 }
 
 /**

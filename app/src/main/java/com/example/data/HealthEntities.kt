@@ -33,6 +33,7 @@ data class DailyHealthSummaryEntity(
     val dateString: String, // Format: YYYY-MM-DD
     val waterIntakeMl: Int = 0,
     val waterTargetMl: Int = 2500,
+    val waterMaxLimitMl: Int = 3700,
     val calorieTarget: Int = 2200,
     val stepsCount: Int = 0,
     val weightKg: Double = 0.0

@@ -12,6 +12,18 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <queries>
+        <package android:name="com.google.android.gm" />
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="message/rfc822" />
+        </intent>
+    </queries>
+
     <application
         android:name=".TaskPulseApp"
         android:allowBackup="true"
@@ -68,6 +80,16 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.example.ACTION_TASK_DEADLINE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Intelligent Hydration Reminder Receiver -->
+        <receiver
+            android:name=".receiver.HydrationReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.ACTION_CHECK_HYDRATION" />
+                <action android:name="com.example.ACTION_QUICK_LOG_WATER" />
             </intent-filter>
         </receiver>
 

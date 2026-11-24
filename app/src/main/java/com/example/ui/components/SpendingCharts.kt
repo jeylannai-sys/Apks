@@ -47,6 +47,7 @@ fun MonthlyExpenseDonutChart(
     breakdown: List<CategorySpendingSummary>,
     totalExpense: Double,
     currency: AppCurrency = AppCurrency.PHP,
+    hideAmounts: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val progress = remember { Animatable(0f) }
@@ -114,7 +115,7 @@ fun MonthlyExpenseDonutChart(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = currency.formatCompact(totalExpense),
+                    text = currency.mask(currency.formatCompact(totalExpense), hideAmounts),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface

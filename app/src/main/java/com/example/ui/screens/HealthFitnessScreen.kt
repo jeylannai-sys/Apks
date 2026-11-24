@@ -38,9 +38,15 @@ import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsPaused
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Scale
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -56,7 +62,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -81,6 +89,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.CalorieLogEntity
 import com.example.data.DailyHealthSummaryEntity
 import com.example.data.WorkoutLogEntity
+import com.example.service.HydrationReminderManager
+import com.example.service.HydrationReminderState
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -128,10 +138,15 @@ fun HealthFitnessScreen(
     onSaveWorkout: (WorkoutLogEntity) -> Unit,
     onDeleteWorkout: (WorkoutLogEntity) -> Unit,
     onAddWater: (Int) -> Unit,
+    onResetWater: () -> Unit = {},
+    onUpdateWaterLimits: (Int, Int) -> Unit = { _, _ -> },
+    hydrationReminderState: HydrationReminderState = HydrationReminderState(),
+    onToggleHydrationReminders: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showCameraCalorieSheet by remember { mutableStateOf(false) }
     var showWorkoutSheet by remember { mutableStateOf(false) }
+    var showWaterLimitsDialog by remember { mutableStateOf(false) }
 
     // High performance 90-120 FPS memoized calculation: zero allocations during scroll
     val todayStats = remember(calorieLogs, workoutLogs) {
@@ -167,8 +182,9 @@ fun HealthFitnessScreen(
     val totalCarbs = todayStats.totalCarbs
     val totalFat = todayStats.totalFat
 
-    val waterMl = dailyHealth?.waterIntakeMl ?: 1750
-    val waterTarget = dailyHealth?.waterTargetMl ?: 2500
+    val waterMl = dailyHealth?.waterIntakeMl ?: 0
+    val waterTarget = (dailyHealth?.waterTargetMl ?: 2500).coerceAtLeast(1)
+    val waterMaxLimit = (dailyHealth?.waterMaxLimitMl ?: 3700).coerceAtLeast(waterTarget)
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -328,10 +344,14 @@ fun HealthFitnessScreen(
                 }
             }
 
-            // Water Intake Tracker Card
+            // Water Intake Tracker Card (Starts at 0 ml + Everyday Life Max Intake Guide)
             item {
+                val reachedEverydayMax = waterMl >= waterMaxLimit
+                val overEverydayMax = waterMl > waterMaxLimit
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hydration_tracker_card"),
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
@@ -341,45 +361,63 @@ fun HealthFitnessScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(36.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF0EA5E9).copy(alpha = 0.2f)),
+                                        .background(
+                                            if (overEverydayMax) Color(0xFFF59E0B).copy(alpha = 0.2f)
+                                            else Color(0xFF0EA5E9).copy(alpha = 0.2f)
+                                        ),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(imageVector = Icons.Default.LocalDrink, contentDescription = null, tint = Color(0xFF0EA5E9), modifier = Modifier.size(18.dp))
+                                    Icon(
+                                        imageVector = if (overEverydayMax) Icons.Default.Warning else Icons.Default.LocalDrink,
+                                        contentDescription = null,
+                                        tint = if (overEverydayMax) Color(0xFFF59E0B) else Color(0xFF0EA5E9),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column {
-                                    Text(text = "Hydration Tracker", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                     Text(
-                                        text = "$waterMl / $waterTarget ml (${(waterMl * 100 / waterTarget).coerceAtMost(100)}%)",
+                                        text = "Hydration Tracker",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text(
+                                        text = "$waterMl / $waterTarget ml (${(waterMl * 100 / waterTarget)}%)",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("hydration_progress_text")
                                     )
                                 }
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Button(
-                                    onClick = { onAddWater(250) },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0EA5E9)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(34.dp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = onResetWater,
+                                    modifier = Modifier.testTag("hydration_reset_button")
                                 ) {
-                                    Text("+250ml", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Icon(
+                                        imageVector = Icons.Default.RestartAlt,
+                                        contentDescription = "Reset water to 0 ml",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                                Button(
-                                    onClick = { onAddWater(500) },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(34.dp)
+                                IconButton(
+                                    onClick = { showWaterLimitsDialog = true },
+                                    modifier = Modifier.testTag("hydration_limits_button")
                                 ) {
-                                    Text("+500ml", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Adjust daily target & everyday maximum",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
                         }
@@ -392,10 +430,176 @@ fun HealthFitnessScreen(
                                 .fillMaxWidth()
                                 .height(8.dp)
                                 .clip(RoundedCornerShape(4.dp)),
-                            color = Color(0xFF0EA5E9),
+                            color = if (overEverydayMax) Color(0xFFF59E0B) else Color(0xFF0EA5E9),
                             trackColor = MaterialTheme.colorScheme.surface,
                             strokeCap = StrokeCap.Round
                         )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Everyday Life Maximum Daily Water Intake Banner
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (overEverydayMax) Color(0xFFF59E0B).copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Everyday Life Max Intake",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (overEverydayMax) Color(0xFFF59E0B) else Color(0xFF0EA5E9)
+                                    )
+                                    Text(
+                                        text = "$waterMl / $waterMaxLimit ml max",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (overEverydayMax) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = when {
+                                        overEverydayMax -> "Everyday max ($waterMaxLimit ml) exceeded. Pace fluids carefully to avoid overhydration."
+                                        reachedEverydayMax -> "You reached your $waterMaxLimit ml everyday maximum for today."
+                                        else -> "Recommended everyday intake: ~2,700 ml (women) to ~3,700 ml (men). Remaining before max: ${(waterMaxLimit - waterMl).coerceAtLeast(0)} ml."
+                                    },
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onAddWater(250) },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0EA5E9)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("add_water_250_button")
+                            ) {
+                                Text("+250 ml", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = { onAddWater(500) },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("add_water_500_button")
+                            ) {
+                                Text("+500 ml", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = onResetWater,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.height(42.dp)
+                            ) {
+                                Text("Reset 0", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Intelligent 3-Hour Hydration Reminder & DND Status Panel
+                        val lastLoggedLabel = remember(hydrationReminderState.lastWaterIntakeMillis) {
+                            HydrationReminderManager.formatElapsedLabel(hydrationReminderState.lastWaterIntakeMillis)
+                        }
+                        val workoutMinsToday = todayWorkouts.sumOf { it.durationMinutes }
+                        val workoutBurnToday = todayStats.totalBurned
+                        val healthNudgePreview = when {
+                            hydrationReminderState.isDoNotDisturbActive || hydrationReminderState.suppressedByDnd ->
+                                "Do Not Disturb is active — hydration nudges are paused silently until DND turns off."
+                            !hydrationReminderState.enabled ->
+                                "Smart 3h nudges are paused. Enable to receive health-aware hydration alerts."
+                            workoutBurnToday >= 200 ->
+                                "Health insight: ${workoutMinsToday}m workout (-$workoutBurnToday kcal) logged today — we'll nudge +500 ml if no water is logged for 3h."
+                            else ->
+                                "Active: checks health stats & nudges you if no water is logged for 3 hours (respects DND)."
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (hydrationReminderState.isDoNotDisturbActive) {
+                                Color(0xFF8B5CF6).copy(alpha = 0.14f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("hydration_smart_reminder_panel")
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (hydrationReminderState.isDoNotDisturbActive || !hydrationReminderState.enabled) {
+                                                Icons.Default.NotificationsPaused
+                                            } else {
+                                                Icons.Default.NotificationsActive
+                                            },
+                                            contentDescription = null,
+                                            tint = if (hydrationReminderState.isDoNotDisturbActive) Color(0xFF8B5CF6) else Color(0xFF0EA5E9),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = "Smart 3h Hydration Reminder",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "Last logged: $lastLoggedLabel",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = hydrationReminderState.enabled,
+                                        onCheckedChange = onToggleHydrationReminders,
+                                        modifier = Modifier.testTag("hydration_smart_reminder_switch")
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Text(
+                                    text = healthNudgePreview,
+                                    fontSize = 11.sp,
+                                    color = if (hydrationReminderState.isDoNotDisturbActive) {
+                                        Color(0xFFA78BFA)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -482,6 +686,81 @@ fun HealthFitnessScreen(
             onSaveWorkout = {
                 onSaveWorkout(it)
                 showWorkoutSheet = false
+            }
+        )
+    }
+
+    // Everyday Life Water Limits Dialog
+    if (showWaterLimitsDialog) {
+        var targetText by remember { mutableStateOf(waterTarget.toString()) }
+        var maxText by remember { mutableStateOf(waterMaxLimit.toString()) }
+
+        AlertDialog(
+            onDismissRequest = { showWaterLimitsDialog = false },
+            title = { Text("Daily Water Intake Limits", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Everyday guidelines: ~2,700 ml/day for women, ~3,700 ml/day for men, and up to ~4,000 ml for active days.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = maxText == "2700",
+                            onClick = {
+                                targetText = "2200"
+                                maxText = "2700"
+                            },
+                            label = { Text("2.7L Max", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = maxText == "3700",
+                            onClick = {
+                                targetText = "2500"
+                                maxText = "3700"
+                            },
+                            label = { Text("3.7L Max", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = maxText == "4000",
+                            onClick = {
+                                targetText = "3000"
+                                maxText = "4000"
+                            },
+                            label = { Text("4.0L Active", fontSize = 11.sp) }
+                        )
+                    }
+                    OutlinedTextField(
+                        value = targetText,
+                        onValueChange = { if (it.all(Char::isDigit)) targetText = it },
+                        label = { Text("Daily Goal (ml)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = maxText,
+                        onValueChange = { if (it.all(Char::isDigit)) maxText = it },
+                        label = { Text("Maximum Daily Water Intake (ml)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val t = (targetText.toIntOrNull() ?: 2500).coerceIn(500, 6000)
+                    val m = (maxText.toIntOrNull() ?: 3700).coerceIn(t, 8000)
+                    onUpdateWaterLimits(t, m)
+                    showWaterLimitsDialog = false
+                }) {
+                    Text("Save Limits")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWaterLimitsDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }

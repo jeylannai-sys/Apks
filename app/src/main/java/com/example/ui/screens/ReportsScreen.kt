@@ -64,6 +64,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.platform.LocalContext
 import com.example.util.FinancialExportHelper
 import java.util.Calendar
@@ -75,6 +77,8 @@ fun ReportsScreen(
     budgets: List<BudgetEntity>,
     currency: AppCurrency,
     repository: TaskPulseRepository,
+    hideAmounts: Boolean = false,
+    onToggleHideAmounts: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedCalendar by remember { mutableStateOf(Calendar.getInstance()) }
@@ -138,12 +142,27 @@ fun ReportsScreen(
             }
         }
 
-        // Statement Export Button Row
+        // Statement Export & Privacy Toggle Row
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                OutlinedButton(
+                    onClick = onToggleHideAmounts,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Icon(
+                        imageVector = if (hideAmounts) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (hideAmounts) "Show" else "Hide", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
                 OutlinedButton(
                     onClick = { showExportDialog = true },
                     shape = RoundedCornerShape(10.dp),
@@ -222,7 +241,10 @@ fun ReportsScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Net savings this month: ${currency.format(report.netSavings)} (${String.format(Locale.US, "%.1f", report.savingsRate)}% savings rate). Daily average expenditure is ${currency.format(report.dailyAverageSpent)}.",
+                        text = if (hideAmounts)
+                            "Net savings this month: ${currency.mask(currency.format(report.netSavings), true)}. Daily average expenditure is ${currency.maskedOnly()}."
+                        else
+                            "Net savings this month: ${currency.format(report.netSavings)} (${String.format(Locale.US, "%.1f", report.savingsRate)}% savings rate). Daily average expenditure is ${currency.format(report.dailyAverageSpent)}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -264,8 +286,100 @@ fun ReportsScreen(
                     MonthlyExpenseDonutChart(
                         breakdown = report.categoryBreakdown,
                         totalExpense = report.totalExpenses,
-                        currency = currency
+                        currency = currency,
+                        hideAmounts = hideAmounts
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Remaining Balance Summary Strip inside Spending by Category
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Income",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = currency.mask(currency.formatCompact(report.totalIncome), hideAmounts),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color(0xFF10B981)
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Total Spent",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = currency.mask(currency.formatCompact(report.totalExpenses), hideAmounts),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color(0xFFF43F5E)
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.weight(1.1f),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Text(
+                                    text = "Remaining Balance",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = currency.mask(currency.format(report.netSavings), hideAmounts),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (report.netSavings >= 0) Color(0xFF10B981) else MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    if (report.totalBudgetLimit > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Budget Remaining (${currency.mask(currency.formatCompact(report.totalBudgetLimit), hideAmounts)} total cap)",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = currency.mask(currency.format(report.remainingBudgetBalance), hideAmounts),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (report.remainingBudgetBalance >= 0) Color(0xFF10B981) else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -297,7 +411,10 @@ fun ReportsScreen(
 
                     InsightBullet(
                         title = "Daily Spending Velocity",
-                        desc = "At ${currency.format(report.dailyAverageSpent)}/day, your projected 30-day run rate is ${currency.formatCompact(report.dailyAverageSpent * 30)}."
+                        desc = if (hideAmounts)
+                            "At ${currency.maskedOnly()}/day, your projected 30-day run rate is ${currency.maskedOnly()}."
+                        else
+                            "At ${currency.format(report.dailyAverageSpent)}/day, your projected 30-day run rate is ${currency.formatCompact(report.dailyAverageSpent * 30)}."
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -370,15 +487,16 @@ fun ReportsScreen(
 
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = currency.format(item.totalSpent),
+                                    text = currency.mask(currency.format(item.totalSpent), hideAmounts),
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 14.sp
                                 )
                                 Text(
-                                    text = if (item.budgetLimit > 0)
-                                        "Limit: ${currency.formatCompact(item.budgetLimit)}"
-                                    else "No limit",
+                                    text = when {
+                                        item.budgetLimit > 0 -> "Limit: ${currency.mask(currency.formatCompact(item.budgetLimit), hideAmounts)}"
+                                        else -> "No limit"
+                                    },
                                     fontSize = 11.sp,
                                     color = if (isOver) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -397,6 +515,28 @@ fun ReportsScreen(
                                 trackColor = MaterialTheme.colorScheme.surface,
                                 strokeCap = StrokeCap.Round
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isOver) "Over Budget" else "Remaining Balance",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = if (isOver)
+                                        "-${currency.mask(currency.formatCompact(item.totalSpent - item.budgetLimit), hideAmounts)}"
+                                    else
+                                        currency.mask(currency.formatCompact(item.remainingBalance), hideAmounts),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (isOver) MaterialTheme.colorScheme.error else Color(0xFF10B981)
+                                )
+                            }
                         }
                     }
                 }

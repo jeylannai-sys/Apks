@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,9 +27,9 @@ import java.util.Locale
         DiagramConnectionEntity::class,
         HabitEntity::class,
         HabitCompletionEntity::class,
-        MilestoneEntity::class
+        VaultFileEntity::class
     ],
-    version = 9,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,11 +40,18 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun healthDao(): HealthDao
     abstract fun diagramDao(): DiagramDao
     abstract fun habitDao(): HabitDao
-    abstract fun milestoneDao(): MilestoneDao
+    abstract fun vaultDao(): VaultDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE vault_files ADD COLUMN originalRelativePath TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE vault_files ADD COLUMN originalUriString TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -52,6 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "taskpulse_database.db"
                 )
+                    .addMigrations(MIGRATION_10_11)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -228,13 +237,14 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             )
 
-            // Seed Health & Fitness Starter Data
+            // Seed Health & Fitness Starter Data (Hydration starts fresh at 0 ml)
             val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(now)
             database.healthDao().saveDailyHealth(
                 DailyHealthSummaryEntity(
                     dateString = todayStr,
-                    waterIntakeMl = 1750,
+                    waterIntakeMl = 0,
                     waterTargetMl = 2500,
+                    waterMaxLimitMl = 3700,
                     calorieTarget = 2200,
                     stepsCount = 6420,
                     weightKg = 68.5
@@ -455,162 +465,6 @@ abstract class AppDatabase : RoomDatabase() {
                     habitDao.recordCompletion(HabitCompletionEntity(habitId = h4Id, dateString = dStr, completedAtMillis = cal.timeInMillis))
                 }
             }
-
-            // Seed Initial Milestones (Badges)
-            val defaultMilestones = listOf(
-                MilestoneEntity(
-                    id = "streak_3",
-                    title = "Flame Starter",
-                    description = "Maintain a 3-day daily streak on any habit",
-                    category = "HABIT",
-                    tier = "BRONZE",
-                    badgeColorHex = "#F97316",
-                    iconName = "LocalFireDepartment",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L * 3,
-                    currentProgress = 3,
-                    targetProgress = 3
-                ),
-                MilestoneEntity(
-                    id = "streak_7",
-                    title = "Consistency Master",
-                    description = "Hit a 7-day unbroken habit streak",
-                    category = "HABIT",
-                    tier = "SILVER",
-                    badgeColorHex = "#38BDF8",
-                    iconName = "LocalFireDepartment",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L,
-                    currentProgress = 7,
-                    targetProgress = 7
-                ),
-                MilestoneEntity(
-                    id = "streak_21",
-                    title = "Habit Virtuoso",
-                    description = "Achieve the scientific 21-day neurological habit lock",
-                    category = "HABIT",
-                    tier = "GOLD",
-                    badgeColorHex = "#EAB308",
-                    iconName = "LocalFireDepartment",
-                    isUnlocked = false,
-                    currentProgress = 14,
-                    targetProgress = 21
-                ),
-                MilestoneEntity(
-                    id = "save_first",
-                    title = "First Coin Saved",
-                    description = "Record a positive net savings balance for the month",
-                    category = "FINANCE",
-                    tier = "BRONZE",
-                    badgeColorHex = "#10B981",
-                    iconName = "Savings",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L * 5,
-                    currentProgress = 1,
-                    targetProgress = 1
-                ),
-                MilestoneEntity(
-                    id = "save_frugal_20",
-                    title = "Frugal Titan",
-                    description = "Attain a monthly savings rate of 20% or higher",
-                    category = "FINANCE",
-                    tier = "SILVER",
-                    badgeColorHex = "#6366F1",
-                    iconName = "TrendingUp",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L * 2,
-                    currentProgress = 1,
-                    targetProgress = 1
-                ),
-                MilestoneEntity(
-                    id = "save_under_budget",
-                    title = "Budget Guardian",
-                    description = "Keep all discretionary spending categories strictly under limits",
-                    category = "FINANCE",
-                    tier = "GOLD",
-                    badgeColorHex = "#F59E0B",
-                    iconName = "Shield",
-                    isUnlocked = false,
-                    currentProgress = 0,
-                    targetProgress = 1
-                ),
-                MilestoneEntity(
-                    id = "fit_water_2500",
-                    title = "Hydration Hero",
-                    description = "Drink 2,500ml or more of water in a single day",
-                    category = "FITNESS",
-                    tier = "BRONZE",
-                    badgeColorHex = "#0EA5E9",
-                    iconName = "WaterDrop",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L,
-                    currentProgress = 2500,
-                    targetProgress = 2500
-                ),
-                MilestoneEntity(
-                    id = "fit_workouts_3",
-                    title = "Cardio Warrior",
-                    description = "Log at least 3 workouts or cardio sessions in a week",
-                    category = "FITNESS",
-                    tier = "SILVER",
-                    badgeColorHex = "#EF4444",
-                    iconName = "FitnessCenter",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L * 4,
-                    currentProgress = 3,
-                    targetProgress = 3
-                ),
-                MilestoneEntity(
-                    id = "fit_steps_10k",
-                    title = "10K Step Crusher",
-                    description = "Reach 10,000 steps logged in a single day",
-                    category = "FITNESS",
-                    tier = "GOLD",
-                    badgeColorHex = "#EAB308",
-                    iconName = "DirectionsRun",
-                    isUnlocked = false,
-                    currentProgress = 6200,
-                    targetProgress = 10000
-                ),
-                MilestoneEntity(
-                    id = "prod_pomodoro_4",
-                    title = "Deep Work Pro",
-                    description = "Complete 4 Pomodoro focus sessions in one day",
-                    category = "PRODUCTIVITY",
-                    tier = "SILVER",
-                    badgeColorHex = "#F97316",
-                    iconName = "HourglassTop",
-                    isUnlocked = false,
-                    currentProgress = 2,
-                    targetProgress = 4
-                ),
-                MilestoneEntity(
-                    id = "prod_diagram_1",
-                    title = "Master Architect",
-                    description = "Create or customize a visual flowchart or planning diagram",
-                    category = "PRODUCTIVITY",
-                    tier = "BRONZE",
-                    badgeColorHex = "#8B5CF6",
-                    iconName = "AccountTree",
-                    isUnlocked = true,
-                    unlockedAtMillis = now - 86400000L * 6,
-                    currentProgress = 1,
-                    targetProgress = 1
-                ),
-                MilestoneEntity(
-                    id = "prod_tasks_10",
-                    title = "Task Terminator",
-                    description = "Complete 10 scheduled tasks",
-                    category = "PRODUCTIVITY",
-                    tier = "GOLD",
-                    badgeColorHex = "#EC4899",
-                    iconName = "CheckCircle",
-                    isUnlocked = false,
-                    currentProgress = 4,
-                    targetProgress = 10
-                )
-            )
-            database.milestoneDao().insertMilestones(defaultMilestones)
         }
     }
 }

@@ -42,9 +42,9 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
@@ -52,8 +52,8 @@ import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.FitnessCenter
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -89,17 +89,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.service.BackgroundMusicManager
 import com.example.ui.components.SplashLogoScreen
 import com.example.ui.screens.ClockScreen
 import com.example.ui.screens.DiagramPlanningScreen
 import com.example.ui.screens.FinanceScreen
 import com.example.ui.screens.HealthFitnessScreen
-import com.example.ui.screens.MilestonesScreen
+import com.example.ui.screens.PrivateFileSafeScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.TasksScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.ThemeMode
+import com.example.util.DisplayRefreshRateHelper
+import com.example.util.configureAppCheck
 
 enum class AppScreen(
     val title: String,
@@ -115,20 +118,31 @@ enum class AppScreen(
     CLOCK("Clock & Alarms", "Clock", Icons.Filled.Alarm, Icons.Outlined.Alarm, "nav_clock"),
     REPORTS("Monthly Reports", "Reports", Icons.Filled.BarChart, Icons.Outlined.BarChart, "nav_reports"),
     SETTINGS("Settings", "Settings", Icons.Filled.Tune, Icons.Outlined.Tune, "nav_settings"),
-    MILESTONES("User Milestones", "Milestones", Icons.Filled.EmojiEvents, Icons.Outlined.EmojiEvents, "nav_milestones")
+    FILE_SAFE("Private File Safe", "Safe", Icons.Filled.Lock, Icons.Outlined.Lock, "nav_file_safe")
 }
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private var pendingNotificationScreen by mutableStateOf<String?>(null)
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // STEP 1: Configure App Check with launch intent before any UI or Firebase operations
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val refreshRatePreference by viewModel.refreshRatePreference.collectAsStateWithLifecycle()
+            var deviceDisplayInfo by remember {
+                mutableStateOf(DisplayRefreshRateHelper.applyRefreshRate(this@MainActivity, refreshRatePreference))
+            }
+
+            LaunchedEffect(refreshRatePreference) {
+                deviceDisplayInfo = DisplayRefreshRateHelper.applyRefreshRate(this@MainActivity, refreshRatePreference)
+            }
 
             MyApplicationTheme(themeMode = themeMode) {
                 val context = LocalContext.current
@@ -151,6 +165,18 @@ class MainActivity : ComponentActivity() {
 
                 var showSplash by rememberSaveable { mutableStateOf(widgetTarget == null) }
 
+                LaunchedEffect(pendingNotificationScreen) {
+                    val target = pendingNotificationScreen
+                    if (!target.isNullOrBlank()) {
+                        val resolved = try { AppScreen.valueOf(target) } catch (_: Exception) { null }
+                        if (resolved != null) {
+                            currentScreenName = resolved.name
+                            showSplash = false
+                        }
+                        pendingNotificationScreen = null
+                    }
+                }
+
                 // Request notification permission on Android 13+ (API 33+)
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
@@ -166,7 +192,7 @@ class MainActivity : ComponentActivity() {
 
                 // Predictive-back-friendly BackHandler: disabled on root TASKS screen so system back-to-home works seamlessly
                 BackHandler(enabled = !showSplash && currentScreen != AppScreen.TASKS) {
-                    if (currentScreen == AppScreen.MILESTONES) {
+                    if (currentScreen == AppScreen.FILE_SAFE) {
                         navigateTo(AppScreen.SETTINGS)
                     } else {
                         navigateTo(AppScreen.TASKS)
@@ -181,23 +207,21 @@ class MainActivity : ComponentActivity() {
                 val transactions by viewModel.transactions.collectAsStateWithLifecycle()
                 val budgets by viewModel.budgets.collectAsStateWithLifecycle()
                 val currency by viewModel.currency.collectAsStateWithLifecycle()
+                val hideFinanceAmounts by viewModel.hideFinanceAmounts.collectAsStateWithLifecycle()
+                val receiptScanState by viewModel.receiptScanState.collectAsStateWithLifecycle()
                 val calorieLogs by viewModel.calorieLogs.collectAsStateWithLifecycle()
                 val workoutLogs by viewModel.workoutLogs.collectAsStateWithLifecycle()
                 val dailyHealth by viewModel.dailyHealth.collectAsStateWithLifecycle()
+                val vaultFiles by viewModel.vaultFiles.collectAsStateWithLifecycle()
 
                 val diagrams by viewModel.diagrams.collectAsStateWithLifecycle()
-                val selectedDiagramId by viewModel.selectedDiagramId.collectAsStateWithLifecycle()
+                val currentDiagram by viewModel.activeDiagram.collectAsStateWithLifecycle()
                 val diagramNodes by viewModel.currentDiagramNodes.collectAsStateWithLifecycle()
                 val diagramConnections by viewModel.currentDiagramConnections.collectAsStateWithLifecycle()
-                val currentDiagram = remember(diagrams, selectedDiagramId) {
-                    diagrams.find { it.id == selectedDiagramId } ?: diagrams.firstOrNull()
-                }
-
-                val milestones by viewModel.milestones.collectAsStateWithLifecycle()
-
-                LaunchedEffect(currentScreen) {
-                    viewModel.triggerMilestonesEvaluation()
-                }
+                val bgmState by viewModel.bgmState.collectAsStateWithLifecycle()
+                val hydrationReminderState by viewModel.hydrationReminderState.collectAsStateWithLifecycle()
+                val budgetThresholdState by viewModel.budgetThresholdState.collectAsStateWithLifecycle()
+                val activeBudgetAlerts by viewModel.activeBudgetAlerts.collectAsStateWithLifecycle()
 
                 val primaryNavScreens = remember {
                     listOf(
@@ -404,6 +428,7 @@ class MainActivity : ComponentActivity() {
                                                 connections = diagramConnections,
                                                 onSelectDiagram = { viewModel.selectDiagram(it) },
                                                 onCreateDiagram = { title, style -> viewModel.createDiagram(title, style) },
+                                                onRenameDiagram = { diagram, newTitle, newDesc -> viewModel.renameDiagram(diagram, newTitle, newDesc) },
                                                 onUpdateDiagramStyle = { diagram, style -> viewModel.updateDiagramStyle(diagram, style) },
                                                 onDeleteDiagram = { viewModel.deleteDiagram(it) },
                                                 onSaveNode = { viewModel.saveNode(it) },
@@ -412,19 +437,35 @@ class MainActivity : ComponentActivity() {
                                                 onSaveConnection = { viewModel.saveConnection(it) },
                                                 onDeleteConnection = { viewModel.deleteConnection(it) },
                                                 onAutoArrangeNodes = { viewModel.autoArrangeDiagram(it) },
+                                                onResetDiagram = { id, addStarter -> viewModel.resetDiagramCanvas(id, addStarter) },
                                                 onLoadTemplate = { viewModel.loadDiagramTemplate(it) },
-                                                onConvertToTask = { viewModel.saveTask(it) }
+                                                onConvertToTask = { viewModel.saveTask(it) },
+                                                onAddShapeWithConnection = { node, fromId, label ->
+                                                    viewModel.addShapeWithOptionalConnection(node, fromId, label)
+                                                }
                                             )
 
                                             AppScreen.FINANCE -> FinanceScreen(
                                                 transactions = transactions,
                                                 budgets = budgets,
                                                 currency = currency,
+                                                hideAmounts = hideFinanceAmounts,
+                                                onToggleHideAmounts = { viewModel.toggleHideFinanceAmounts() },
+                                                receiptScanState = receiptScanState,
+                                                onScanReceipt = { viewModel.scanReceiptBitmap(it) },
+                                                onResetReceiptScan = { viewModel.resetReceiptScanState() },
                                                 onCurrencyChanged = { viewModel.setCurrency(it) },
                                                 onSaveExpense = { viewModel.saveExpense(it) },
                                                 onDeleteExpense = { viewModel.deleteExpense(it) },
                                                 onSetBudget = { cat, limit -> viewModel.setBudget(cat, limit) },
-                                                onAdoptGoal = { viewModel.adoptSmartGoal(it) }
+                                                onAdoptGoal = { viewModel.adoptSmartGoal(it) },
+                                                budgetThresholdState = budgetThresholdState,
+                                                activeBudgetAlerts = activeBudgetAlerts,
+                                                onToggleBudgetAlerts = { viewModel.setBudgetAlertsEnabled(it) },
+                                                onSetDefaultBudgetThreshold = { viewModel.setDefaultBudgetThresholdPercent(it) },
+                                                onSetCategoryBudgetThreshold = { cat, pct ->
+                                                    viewModel.setCategoryBudgetThresholdPercent(cat, pct)
+                                                }
                                             )
 
                                             AppScreen.HEALTH -> HealthFitnessScreen(
@@ -435,7 +476,11 @@ class MainActivity : ComponentActivity() {
                                                 onDeleteCalorieLog = { viewModel.deleteCalorieLog(it) },
                                                 onSaveWorkout = { viewModel.saveWorkoutLog(it) },
                                                 onDeleteWorkout = { viewModel.deleteWorkoutLog(it) },
-                                                onAddWater = { viewModel.addWaterIntake(it) }
+                                                onAddWater = { viewModel.addWaterIntake(it) },
+                                                onResetWater = { viewModel.resetWaterIntake() },
+                                                onUpdateWaterLimits = { t, m -> viewModel.updateWaterLimits(t, m) },
+                                                hydrationReminderState = hydrationReminderState,
+                                                onToggleHydrationReminders = { viewModel.setHydrationRemindersEnabled(it) }
                                             )
 
                                             AppScreen.CLOCK -> ClockScreen(
@@ -449,7 +494,9 @@ class MainActivity : ComponentActivity() {
                                                 transactions = transactions,
                                                 budgets = budgets,
                                                 currency = currency,
-                                                repository = viewModel.repository
+                                                repository = viewModel.repository,
+                                                hideAmounts = hideFinanceAmounts,
+                                                onToggleHideAmounts = { viewModel.toggleHideFinanceAmounts() }
                                             )
 
                                             AppScreen.SETTINGS -> SettingsScreen(
@@ -457,11 +504,38 @@ class MainActivity : ComponentActivity() {
                                                 onThemeChanged = { viewModel.setThemeMode(it) },
                                                 currency = currency,
                                                 onCurrencyChanged = { viewModel.setCurrency(it) },
-                                                onOpenMilestones = { navigateTo(AppScreen.MILESTONES) }
+                                                refreshRatePreference = refreshRatePreference,
+                                                deviceDisplayInfo = deviceDisplayInfo,
+                                                onRefreshRateChanged = { pref ->
+                                                    viewModel.setRefreshRatePreference(pref)
+                                                    deviceDisplayInfo = DisplayRefreshRateHelper.applyRefreshRate(this@MainActivity, pref)
+                                                },
+                                                bgmState = bgmState,
+                                                onImportBackgroundMusic = { uri, cb -> viewModel.importBackgroundMusic(uri, cb) },
+                                                onClearBackgroundMusic = { viewModel.clearBackgroundMusic() },
+                                                onToggleBgmEnabled = { viewModel.setBgmEnabled(it) },
+                                                onToggleBgmAutoPlay = { viewModel.setBgmAutoPlayOnOpen(it) },
+                                                onToggleBgmLoop = { viewModel.setBgmLoop(it) },
+                                                onToggleBgmPauseOnLeave = { viewModel.setBgmPauseOnLeave(it) },
+                                                onBgmVolumeChanged = { viewModel.setBgmVolume(it) },
+                                                onToggleBgmPlayPause = { viewModel.toggleBgmPlayPause() },
+                                                onOpenFileSafe = { navigateTo(AppScreen.FILE_SAFE) }
                                             )
 
-                                            AppScreen.MILESTONES -> MilestonesScreen(
-                                                milestones = milestones
+                                            AppScreen.FILE_SAFE -> PrivateFileSafeScreen(
+                                                vaultFiles = vaultFiles,
+                                                onImportFiles = { uris, autoHide, cb ->
+                                                    viewModel.importFilesToVault(uris, autoHide, cb)
+                                                },
+                                                onExportFile = { file, uri, cb -> viewModel.exportVaultFile(file, uri, cb) },
+                                                onRestoreToGallery = { file, removeFromSafe, cb ->
+                                                    viewModel.restoreVaultFileToGallery(file, removeFromSafe, cb)
+                                                },
+                                                onRestoreAllToGallery = { files, removeFromSafe, cb ->
+                                                    viewModel.restoreAllVaultFilesToGallery(files, removeFromSafe, cb)
+                                                },
+                                                onDeleteFile = { viewModel.deleteVaultFile(it) },
+                                                onLockAndExit = { navigateTo(AppScreen.SETTINGS) }
                                             )
                                         }
                                     }
@@ -474,8 +548,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        BackgroundMusicManager.onAppForegrounded(this)
+        viewModel.refreshHydrationReminderStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        DisplayRefreshRateHelper.applyRefreshRate(this, viewModel.refreshRatePreference.value)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) {
+            BackgroundMusicManager.onAppBackgrounded()
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pendingNotificationScreen = intent.getStringExtra("EXTRA_SCREEN")
     }
 }

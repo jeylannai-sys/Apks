@@ -4,12 +4,21 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import com.example.model.AppCurrency
 import com.example.receiver.AlarmReceiver
 import com.example.receiver.TaskReminderReceiver
-import com.example.service.MilestoneEvaluator
+import com.example.service.BudgetThresholdManager
+import com.example.service.HydrationReminderManager
+import com.example.util.PrivateFileSafeHelper
+import com.example.util.VaultBatchRestoreResult
+import com.example.util.VaultImportResult
+import com.example.util.VaultRestoreOutcome
 import com.example.widget.TaskPulseWidgetProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -18,6 +27,7 @@ data class CategorySpendingSummary(
     val category: String,
     val totalSpent: Double,
     val budgetLimit: Double,
+    val remainingBalance: Double,
     val percentageOfBudget: Float,
     val percentageOfTotalSpending: Float
 )
@@ -27,6 +37,8 @@ data class MonthlyReport(
     val totalIncome: Double,
     val totalExpenses: Double,
     val netSavings: Double,
+    val totalBudgetLimit: Double,
+    val remainingBudgetBalance: Double,
     val savingsRate: Float,
     val topSpendingCategory: String,
     val dailyAverageSpent: Double,
@@ -68,10 +80,8 @@ class TaskPulseRepository(
         }
     }
 
-    // Milestones Manager
-    val milestoneEvaluator = MilestoneEvaluator(database)
-
-    val milestonesFlow: Flow<List<MilestoneEntity>> = database.milestoneDao().getAllMilestones()
+    // Private File Safe Flows
+    val vaultFilesFlow: Flow<List<VaultFileEntity>> = database.vaultDao().getAllVaultFiles()
 
     fun getDailyHealthFlow(dateString: String): Flow<DailyHealthSummaryEntity?> =
         database.healthDao().getDailyHealth(dateString)
@@ -240,19 +250,47 @@ class TaskPulseRepository(
     }
 
     // Expense & Budget Operations
-    suspend fun saveExpense(expense: ExpenseEntity): Long {
+    suspend fun saveExpense(expense: ExpenseEntity, currency: AppCurrency = AppCurrency.PHP): Long {
         val id = database.expenseDao().insertExpense(expense)
         TaskPulseWidgetProvider.updateAllWidgets(context)
+        if (expense.isExpense || expense.id > 0L) {
+            val allTx = database.expenseDao().getAllTransactions().first()
+            val allBudgets = database.budgetDao().getAllBudgets().first()
+            BudgetThresholdManager.checkAndNotifyThresholds(
+                context = context,
+                transactions = allTx,
+                budgets = allBudgets,
+                currency = currency,
+                targetCategory = if (expense.id > 0L) null else expense.category
+            )
+        }
         return id
     }
 
-    suspend fun deleteExpense(expense: ExpenseEntity) {
+    suspend fun deleteExpense(expense: ExpenseEntity, currency: AppCurrency = AppCurrency.PHP) {
         database.expenseDao().deleteExpense(expense)
         TaskPulseWidgetProvider.updateAllWidgets(context)
+        val allTx = database.expenseDao().getAllTransactions().first()
+        val allBudgets = database.budgetDao().getAllBudgets().first()
+        BudgetThresholdManager.checkAndNotifyThresholds(
+            context = context,
+            transactions = allTx,
+            budgets = allBudgets,
+            currency = currency
+        )
     }
 
-    suspend fun setBudget(category: String, limit: Double) {
+    suspend fun setBudget(category: String, limit: Double, currency: AppCurrency = AppCurrency.PHP) {
         database.budgetDao().setBudget(BudgetEntity(category, limit))
+        val allTx = database.expenseDao().getAllTransactions().first()
+        val allBudgets = database.budgetDao().getAllBudgets().first()
+        BudgetThresholdManager.checkAndNotifyThresholds(
+            context = context,
+            transactions = allTx,
+            budgets = allBudgets,
+            currency = currency,
+            targetCategory = category
+        )
     }
 
     // Health & Fitness Operations
@@ -279,9 +317,131 @@ class TaskPulseRepository(
     suspend fun addWaterIntake(amountMl: Int) {
         val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(System.currentTimeMillis())
         val current = database.healthDao().getDailyHealth(todayStr).first()
-        val updated = current?.copy(waterIntakeMl = current.waterIntakeMl + amountMl)
-            ?: DailyHealthSummaryEntity(dateString = todayStr, waterIntakeMl = amountMl)
+        val updated = current?.copy(waterIntakeMl = (current.waterIntakeMl + amountMl).coerceAtLeast(0))
+            ?: DailyHealthSummaryEntity(dateString = todayStr, waterIntakeMl = amountMl.coerceAtLeast(0))
         database.healthDao().saveDailyHealth(updated)
+        if (amountMl > 0) {
+            HydrationReminderManager.recordWaterLogged(context)
+        }
+    }
+
+    suspend fun resetWaterIntake() {
+        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(System.currentTimeMillis())
+        val current = database.healthDao().getDailyHealth(todayStr).first()
+        val updated = current?.copy(waterIntakeMl = 0)
+            ?: DailyHealthSummaryEntity(dateString = todayStr, waterIntakeMl = 0)
+        database.healthDao().saveDailyHealth(updated)
+        HydrationReminderManager.recordWaterLogged(context)
+    }
+
+    suspend fun updateWaterLimits(targetMl: Int, maxLimitMl: Int) {
+        val safeTarget = targetMl.coerceIn(500, 6000)
+        val safeMax = maxLimitMl.coerceIn(safeTarget, 8000)
+        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(System.currentTimeMillis())
+        val current = database.healthDao().getDailyHealth(todayStr).first()
+        val updated = current?.copy(waterTargetMl = safeTarget, waterMaxLimitMl = safeMax)
+            ?: DailyHealthSummaryEntity(
+                dateString = todayStr,
+                waterIntakeMl = 0,
+                waterTargetMl = safeTarget,
+                waterMaxLimitMl = safeMax
+            )
+        database.healthDao().saveDailyHealth(updated)
+    }
+
+    // Private File Safe Operations
+    suspend fun importFilesToVault(
+        uris: List<Uri>,
+        autoHideOrigin: Boolean = true
+    ): VaultImportResult = withContext(Dispatchers.IO) {
+        var importedCount = 0
+        var autoHiddenCount = 0
+        val pendingDeleteUris = mutableListOf<Uri>()
+        val recoverableIntents = mutableListOf<android.content.IntentSender>()
+
+        uris.forEach { uri ->
+            val entity = PrivateFileSafeHelper.importUriToVault(context, uri)
+            if (entity != null) {
+                database.vaultDao().insertVaultFile(entity)
+                importedCount++
+
+                if (autoHideOrigin) {
+                    when (val outcome = PrivateFileSafeHelper.tryHideOriginalFromGallery(context, uri, entity.mimeType)) {
+                        is PrivateFileSafeHelper.OriginHideOutcome.RemovedSilently -> {
+                            autoHiddenCount++
+                        }
+                        is PrivateFileSafeHelper.OriginHideOutcome.NeedsMediaStoreDeleteRequest -> {
+                            pendingDeleteUris.add(outcome.mediaUri)
+                        }
+                        is PrivateFileSafeHelper.OriginHideOutcome.NeedsRecoverableSecurityIntent -> {
+                            recoverableIntents.add(outcome.intentSender)
+                        }
+                        is PrivateFileSafeHelper.OriginHideOutcome.NotRemovable -> Unit
+                    }
+                }
+            }
+        }
+
+        VaultImportResult(
+            importedCount = importedCount,
+            autoHiddenFromOriginCount = autoHiddenCount,
+            pendingMediaStoreDeleteUris = pendingDeleteUris.distinct(),
+            recoverableSecurityIntents = recoverableIntents
+        )
+    }
+
+    suspend fun exportVaultFile(vaultFile: VaultFileEntity, destinationUri: Uri): Boolean =
+        withContext(Dispatchers.IO) {
+            PrivateFileSafeHelper.exportVaultFileToUri(context, vaultFile, destinationUri)
+        }
+
+    suspend fun restoreVaultFileToGallery(
+        vaultFile: VaultFileEntity,
+        removeFromVault: Boolean = true
+    ): VaultRestoreOutcome = withContext(Dispatchers.IO) {
+        val outcome = PrivateFileSafeHelper.restoreVaultFileToGallery(context, vaultFile)
+        if (outcome is VaultRestoreOutcome.RestoredToGallery && removeFromVault) {
+            PrivateFileSafeHelper.deleteFromDisk(context, vaultFile)
+            database.vaultDao().deleteVaultFile(vaultFile)
+            outcome.copy(removedFromVault = true)
+        } else {
+            outcome
+        }
+    }
+
+    suspend fun restoreAllVaultFilesToGallery(
+        files: List<VaultFileEntity>,
+        removeFromVault: Boolean = true
+    ): VaultBatchRestoreResult = withContext(Dispatchers.IO) {
+        var restored = 0
+        var failed = 0
+        var lastPath = ""
+        val fallbackList = mutableListOf<VaultFileEntity>()
+        for (file in files) {
+            when (val outcome = restoreVaultFileToGallery(file, removeFromVault)) {
+                is VaultRestoreOutcome.RestoredToGallery -> {
+                    restored++
+                    lastPath = outcome.destinationPath
+                }
+                is VaultRestoreOutcome.NeedsCustomExportPicker -> {
+                    fallbackList.add(file)
+                }
+                is VaultRestoreOutcome.Failed -> {
+                    failed++
+                }
+            }
+        }
+        VaultBatchRestoreResult(
+            restoredCount = restored,
+            fallbackExportNeeded = fallbackList,
+            failedCount = failed,
+            lastDestinationPath = lastPath
+        )
+    }
+
+    suspend fun deleteVaultFile(vaultFile: VaultFileEntity) = withContext(Dispatchers.IO) {
+        PrivateFileSafeHelper.deleteFromDisk(context, vaultFile)
+        database.vaultDao().deleteVaultFile(vaultFile)
     }
 
     // Financial Analysis & Automated Monthly Report generator
@@ -325,12 +485,14 @@ class TaskPulseRepository(
 
         val breakdown = categoryExpenses.map { (cat, spent) ->
             val limit = budgetMap[cat] ?: 0.0
+            val remaining = if (limit > 0) limit - spent else 0.0
             val budgetPercent = if (limit > 0) (spent / limit).toFloat() else 0f
             val totalPercent = if (expenseTotal > 0) (spent / expenseTotal).toFloat() else 0f
             CategorySpendingSummary(
                 category = cat,
                 totalSpent = spent,
                 budgetLimit = limit,
+                remainingBalance = remaining,
                 percentageOfBudget = budgetPercent,
                 percentageOfTotalSpending = totalPercent
             )
@@ -338,6 +500,8 @@ class TaskPulseRepository(
 
         val topCategory = breakdown.firstOrNull()?.category ?: "None"
         val netSavings = incomeTotal - expenseTotal
+        val totalBudgetLimit = budgets.sumOf { it.monthlyLimit }
+        val remainingBudgetBalance = if (totalBudgetLimit > 0) totalBudgetLimit - expenseTotal else netSavings
         val savingsRate = if (incomeTotal > 0) ((netSavings / incomeTotal) * 100).toFloat().coerceAtLeast(0f) else 0f
         val dailyAverage = if (daysInMonth > 0) expenseTotal / daysInMonth else 0.0
 
@@ -346,6 +510,8 @@ class TaskPulseRepository(
             totalIncome = incomeTotal,
             totalExpenses = expenseTotal,
             netSavings = netSavings,
+            totalBudgetLimit = totalBudgetLimit,
+            remainingBudgetBalance = remainingBudgetBalance,
             savingsRate = savingsRate,
             topSpendingCategory = topCategory,
             dailyAverageSpent = dailyAverage,
@@ -389,11 +555,30 @@ class TaskPulseRepository(
             val col = index % 2
             val row = index / 2
             node.copy(
-                posX = 140f + col * 260f,
-                posY = 100f + row * 180f
+                posX = 120f + col * 280f,
+                posY = 80f + row * 190f
             )
         }
         database.diagramDao().insertNodes(updatedNodes)
+    }
+
+    suspend fun clearDiagramCanvas(diagramId: String, addStarterTopic: Boolean = false) {
+        database.diagramDao().deleteAllConnectionsInDiagram(diagramId)
+        database.diagramDao().deleteAllNodesInDiagram(diagramId)
+        if (addStarterTopic) {
+            val starter = DiagramNodeEntity(
+                diagramId = diagramId,
+                title = "Main Topic",
+                description = "Tap Edit or drag shapes to expand",
+                type = NodeType.START_END.name,
+                posX = 160f,
+                posY = 80f,
+                colorHex = "#3B82F6",
+                status = NodeStatus.TODO.name,
+                orderIndex = 1
+            )
+            database.diagramDao().insertNode(starter)
+        }
     }
 
     suspend fun createTemplateDiagram(templateName: String): DiagramEntity {

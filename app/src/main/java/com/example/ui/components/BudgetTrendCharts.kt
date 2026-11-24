@@ -66,6 +66,34 @@ enum class TrendChartMode(val label: String) {
     CATEGORY_ALLOCATION("Categories")
 }
 
+data class ProjectedMonthEndSummary(
+    val totalBudgetLimit: Double,
+    val hasBudget: Boolean,
+    val dailyAvgSpent: Double,
+    val projectedTotal: Double,
+    val projectedDelta: Double
+)
+
+fun computeProjectedMonthEndSummary(
+    budgets: List<BudgetEntity>,
+    totalSpentSoFar: Double,
+    currentDayOfMonth: Int,
+    daysInMonth: Int
+): ProjectedMonthEndSummary {
+    val totalBudgetLimit = budgets.sumOf { it.monthlyLimit.coerceAtLeast(0.0) }
+    val hasBudget = totalBudgetLimit > 0.0
+    val dailyAvgSpent = if (currentDayOfMonth > 0) totalSpentSoFar / currentDayOfMonth else 0.0
+    val projectedTotal = dailyAvgSpent * daysInMonth
+    val projectedDelta = projectedTotal - totalBudgetLimit
+    return ProjectedMonthEndSummary(
+        totalBudgetLimit = totalBudgetLimit,
+        hasBudget = hasBudget,
+        dailyAvgSpent = dailyAvgSpent,
+        projectedTotal = projectedTotal,
+        projectedDelta = projectedDelta
+    )
+}
+
 /**
  * Interactive Budget Trend Charts component providing spending velocity, daily bars, and category breakdown.
  */
@@ -74,18 +102,13 @@ fun BudgetTrendChartsCard(
     transactions: List<ExpenseEntity>,
     budgets: List<BudgetEntity>,
     currency: AppCurrency,
+    hideAmounts: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var selectedMode by remember { mutableStateOf(TrendChartMode.DAILY_BARS) }
     val calendar = remember { Calendar.getInstance() }
     val daysInMonth = remember { calendar.getActualMaximum(Calendar.DAY_OF_MONTH) }
     val currentDayOfMonth = remember { calendar.get(Calendar.DAY_OF_MONTH) }
-
-    // Total monthly limit from budgets
-    val totalBudgetLimit = remember(budgets) {
-        val sum = budgets.sumOf { it.monthlyLimit }
-        if (sum > 0) sum else 1500.0 // Default sensible benchmark
-    }
 
     // Filter to current month expenses
     val currentMonthExpenses = remember(transactions) {
@@ -104,14 +127,23 @@ fun BudgetTrendChartsCard(
         currentMonthExpenses.sumOf { it.amount }
     }
 
-    // Daily pace benchmark: (totalBudgetLimit / daysInMonth) * currentDayOfMonth
-    val expectedSpentByNow = (totalBudgetLimit / daysInMonth) * currentDayOfMonth
-    val isAheadOfPace = totalSpentSoFar > expectedSpentByNow
-
-    // Projected spend by month end
-    val dailyAvgSpent = if (currentDayOfMonth > 0) totalSpentSoFar / currentDayOfMonth else 0.0
-    val projectedTotal = dailyAvgSpent * daysInMonth
-    val projectedDelta = projectedTotal - totalBudgetLimit
+    val summary = remember(budgets, totalSpentSoFar, currentDayOfMonth, daysInMonth) {
+        computeProjectedMonthEndSummary(
+            budgets = budgets,
+            totalSpentSoFar = totalSpentSoFar,
+            currentDayOfMonth = currentDayOfMonth,
+            daysInMonth = daysInMonth
+        )
+    }
+    val totalBudgetLimit = summary.totalBudgetLimit
+    val expectedSpentByNow = if (summary.hasBudget && daysInMonth > 0) {
+        (totalBudgetLimit / daysInMonth) * currentDayOfMonth
+    } else {
+        0.0
+    }
+    val isAheadOfPace = if (summary.hasBudget) totalSpentSoFar > expectedSpentByNow else totalSpentSoFar > 0.0
+    val projectedTotal = summary.projectedTotal
+    val projectedDelta = summary.projectedDelta
 
     // Past 7 Days data points
     val dailyData = remember(transactions) {
@@ -186,9 +218,18 @@ fun BudgetTrendChartsCard(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Pace: ${if (isAheadOfPace) "High Spend Velocity" else "On Track Under Budget"}",
+                            text = when {
+                                !summary.hasBudget && totalSpentSoFar <= 0.0 -> "Pace: No Monthly Budget Set"
+                                !summary.hasBudget -> "Pace: Spending Above ${currency.format(0.0)} Budget"
+                                isAheadOfPace -> "Pace: High Spend Velocity"
+                                else -> "Pace: On Track Under Budget"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (isAheadOfPace) Color(0xFFF97316) else Color(0xFF10B981),
+                            color = when {
+                                !summary.hasBudget && totalSpentSoFar <= 0.0 -> MaterialTheme.colorScheme.onSurfaceVariant
+                                isAheadOfPace -> Color(0xFFF97316)
+                                else -> Color(0xFF10B981)
+                            },
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -217,7 +258,8 @@ fun BudgetTrendChartsCard(
                 TrendChartMode.DAILY_BARS -> {
                     DailyBarsChart(
                         dailyData = dailyData,
-                        currency = currency
+                        currency = currency,
+                        hideAmounts = hideAmounts
                     )
                 }
                 TrendChartMode.CUMULATIVE_VELOCITY -> {
@@ -225,14 +267,16 @@ fun BudgetTrendChartsCard(
                         cumulativeVelocity = cumulativeVelocity,
                         daysInMonth = daysInMonth,
                         totalBudgetLimit = totalBudgetLimit,
-                        currency = currency
+                        currency = currency,
+                        hideAmounts = hideAmounts
                     )
                 }
                 TrendChartMode.CATEGORY_ALLOCATION -> {
                     CategoryAllocationBreakdown(
                         currentMonthExpenses = currentMonthExpenses,
                         budgets = budgets,
-                        currency = currency
+                        currency = currency,
+                        hideAmounts = hideAmounts
                     )
                 }
             }
@@ -262,34 +306,55 @@ fun BudgetTrendChartsCard(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = currency.format(projectedTotal),
+                            text = currency.mask(currency.format(projectedTotal), hideAmounts),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Text(
+                            text = "vs ${currency.mask(currency.format(totalBudgetLimit), hideAmounts)} total budget",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
+                    val showNeutralNoBudget = !summary.hasBudget && projectedTotal <= 0.0
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (projectedDelta > 0) Color(0xFFEF4444).copy(alpha = 0.15f)
-                        else Color(0xFF10B981).copy(alpha = 0.15f)
+                        color = when {
+                            showNeutralNoBudget -> MaterialTheme.colorScheme.surfaceVariant
+                            projectedDelta > 0 -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                            else -> Color(0xFF10B981).copy(alpha = 0.15f)
+                        }
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = if (projectedDelta > 0) Icons.AutoMirrored.Filled.TrendingUp else Icons.AutoMirrored.Filled.TrendingDown,
-                                contentDescription = null,
-                                tint = if (projectedDelta > 0) Color(0xFFEF4444) else Color(0xFF10B981),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            if (!showNeutralNoBudget) {
+                                Icon(
+                                    imageVector = if (projectedDelta > 0) Icons.AutoMirrored.Filled.TrendingUp else Icons.AutoMirrored.Filled.TrendingDown,
+                                    contentDescription = null,
+                                    tint = if (projectedDelta > 0) Color(0xFFEF4444) else Color(0xFF10B981),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
                             Text(
-                                text = if (projectedDelta > 0) "+${currency.format(projectedDelta)} over" else "${currency.format(-projectedDelta)} saved",
+                                text = when {
+                                    showNeutralNoBudget -> "No budget set"
+                                    hideAmounts && projectedDelta > 0 -> "+${currency.maskedOnly()} over"
+                                    hideAmounts -> "${currency.maskedOnly()} saved"
+                                    projectedDelta > 0 -> "+${currency.format(projectedDelta)} over"
+                                    else -> "${currency.format(-projectedDelta)} saved"
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (projectedDelta > 0) Color(0xFFEF4444) else Color(0xFF10B981)
+                                color = when {
+                                    showNeutralNoBudget -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    projectedDelta > 0 -> Color(0xFFEF4444)
+                                    else -> Color(0xFF10B981)
+                                }
                             )
                         }
                     }
@@ -305,7 +370,8 @@ fun BudgetTrendChartsCard(
 @Composable
 private fun DailyBarsChart(
     dailyData: List<Triple<String, String, Double>>,
-    currency: AppCurrency
+    currency: AppCurrency,
+    hideAmounts: Boolean = false
 ) {
     val maxDaily = remember(dailyData) {
         val m = dailyData.maxOfOrNull { it.third } ?: 100.0
@@ -325,7 +391,7 @@ private fun DailyBarsChart(
                     .padding(bottom = 8.dp)
             ) {
                 Text(
-                    text = "${item.second} (${item.first}): ${currency.format(item.third)} spent",
+                    text = "${item.second} (${item.first}): ${currency.mask(currency.format(item.third), hideAmounts)} spent",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -401,7 +467,8 @@ private fun CumulativeVelocityChart(
     cumulativeVelocity: List<Pair<Int, Double>>,
     daysInMonth: Int,
     totalBudgetLimit: Double,
-    currency: AppCurrency
+    currency: AppCurrency,
+    hideAmounts: Boolean = false
 ) {
     Column {
         Box(
@@ -469,7 +536,11 @@ private fun CumulativeVelocityChart(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.width(14.dp).height(2.dp).background(Color(0xFF64748B)))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(text = "Planned Pace (${currency.format(totalBudgetLimit)})", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = "Planned Pace (${currency.mask(currency.format(totalBudgetLimit), hideAmounts)})",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -482,7 +553,8 @@ private fun CumulativeVelocityChart(
 private fun CategoryAllocationBreakdown(
     currentMonthExpenses: List<ExpenseEntity>,
     budgets: List<BudgetEntity>,
-    currency: AppCurrency
+    currency: AppCurrency,
+    hideAmounts: Boolean = false
 ) {
     val totalExpense = remember(currentMonthExpenses) { currentMonthExpenses.sumOf { it.amount } }
     val categoryTotals = remember(currentMonthExpenses) {
@@ -521,7 +593,7 @@ private fun CategoryAllocationBreakdown(
                     ) {
                         Text(text = cat, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         Text(
-                            text = "${currency.format(amount)} (${(pct * 100).toInt()}%)",
+                            text = "${currency.mask(currency.format(amount), hideAmounts)} (${(pct * 100).toInt()}%)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant

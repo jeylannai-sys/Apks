@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.media.AudioAttributes
 import android.os.Build
 import com.example.data.AppDatabase
+import com.example.service.BudgetThresholdManager
+import com.example.service.HydrationReminderManager
 
 class TaskPulseApp : Application() {
 
@@ -14,6 +16,8 @@ class TaskPulseApp : Application() {
         const val CHANNEL_TASKS = "channel_tasks"
         const val CHANNEL_TIMERS = "channel_timers"
         const val CHANNEL_FINANCE = "channel_finance"
+        const val CHANNEL_HYDRATION = "channel_hydration"
+        const val CHANNEL_BUDGET_ALERTS = "channel_budget_alerts"
     }
 
     override fun onCreate() {
@@ -21,6 +25,8 @@ class TaskPulseApp : Application() {
         // Initialize database early
         AppDatabase.getInstance(this)
         createNotificationChannels()
+        HydrationReminderManager.init(this)
+        BudgetThresholdManager.init(this)
     }
 
     private fun createNotificationChannels() {
@@ -78,8 +84,37 @@ class TaskPulseApp : Application() {
                 description = "Spending alerts and monthly spending report summaries"
             }
 
+            // Intelligent Hydration Reminder Channel (respects Do Not Disturb)
+            val hydrationChannel = NotificationChannel(
+                CHANNEL_HYDRATION,
+                "Smart Hydration Reminders",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Health-aware water intake nudges after 3 hours of inactivity"
+                setBypassDnd(false)
+            }
+
+            // Budget Threshold Alert Channel
+            val budgetAlertsChannel = NotificationChannel(
+                CHANNEL_BUDGET_ALERTS,
+                "Budget Threshold Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerts when category spending exceeds your predefined monthly budget percentage"
+                enableVibration(true)
+                setBypassDnd(false)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
+            }
+
             notificationManager.createNotificationChannels(
-                listOf(alarmChannel, taskChannel, timerChannel, financeChannel)
+                listOf(
+                    alarmChannel,
+                    taskChannel,
+                    timerChannel,
+                    financeChannel,
+                    hydrationChannel,
+                    budgetAlertsChannel
+                )
             )
         }
     }
